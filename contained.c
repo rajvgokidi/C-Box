@@ -139,26 +139,192 @@ int pivot_root(const char *new_root, const char *put_old) {
   return syscall(SYS_pivot_root, new_root, put_old);
 }
 
-/*
-<<syscalls>>
+//<<syscalls>>
 #define SCMP_FAIL SCMP_ACT_ERRNO(EPERM)
 
 int syscalls() {
   scmp_filter_ctx ctx = NULL;
   fprintf(sterr, "=> filtering syscalls...");
   if (!(ctx = seccomp_init(SCMP_ACT_ALLOW))
-      || )
+      || seccomp_rule_add(ctx, SCMP_FAIL, SCMP_SYS(chmod), 1, SCMP_A1(SCMP_CMP_MASKED_EQ, S_ISUID, S_ISUID))
+      || seccomp_rule_add(ctx, SCMP_FAIL, SCMP_SYS(chmod), 1, SCMP_A1(SCMP_CMP_MASKED_EQ, S_ISGID, S_ISGID))
+      || seccomp_rule_add(ctx, SCMP_FAIL, SCMP_SYS(fchmod), 1, SCMP_A1(SCMP_CMP_MASKED_EQ, S_ISUID, S_ISUID))
+      || seccomp_rule_add(ctx, SCMP_FAIL, SCMP_SYS(fchmod), 1, SCMP_A1(SCMP_CMP_MASKED_EQ, S_ISGID, S_ISGID))
+      || seccomp_rule_add(ctx, SCMP_FAIL, SCMP_SYS(fchmodat), 1, SCMP_A2(SCMP_CMP_MASKED_EQ, S_ISUID, S_ISUID))
+      || seccomp_rule_add(ctx, SCMP_FAIL, SCMP_SYS(fchmodat), 1, SCMP_A2(SCMP_CMP_MASKED_EQ, S_ISGID, S_ISGID))
+      || seccomp_rule_add(ctx, SCMP_FAIL, SCMP_SYS(unshare), 1, SCMP_A0(SCMP_CMP_MASKED_EQ, CLONE_NEWUSER, CLONE_NEWUSER))
+      || seccomp_rule_add(ctx, SCMP_FAIL, SCMP_SYS(clone), 1, SCMP_A0(SCMP_CMP_MASKED_EQ, CLONE_NEWUSER, CLONE_NEWUSER))
+      || seccomp_rule_add(ctx, SCMP_FAIL, SCMP_SYS(ioctl), 1, SCMP_A1(SCMP_CMP_MASKED_EQ, TIOCSTI, TIOCSTI))
+      || seccomp_rule_add(ctx, SCMP_FAIL, SCMP_SYS(keyctl), 0)
+      || seccomp_rule_add(ctx, SCMP_FAIL, SCMP_SYS(addkey), 0)
+      || seccomp_rule_add(ctx, SCMP_FAIL, SCMP_SYS(request_key), 0)
+      || seccomp_rule_add(ctx, SCMP_FAIL, SCMP_SYS(ptrace), 0)
+      || seccomp_rule_add(ctx, SCMP_FAIL, SCMP_SYS(mbind), 0)
+      || seccomp_rule_add(ctx, SCMP_FAIL, SCMP_SYS(migrate_pages), 0)
+      || seccomp_rule_add(ctx, SCMP_FAIL, SCMP_SYS(move_pages), 0)
+      || seccomp_rule_add(ctx, SCMP_FAIL, SCMP_SYS(set_mempolicy), 0)
+      || seccomp_rule_add(ctx, SCMP_FAIL, SCMP_SYS(userfaultfd), 0)
+      || seccomp_rule_add(ctx, SCMP_FAIL, SCMP_SYS(perf_event_open), 0)
+      || seccomp_attr_set(ctx, SCMP_FLTATR_CTL_NNP, 0)
+      || seccomp_load(ctx)) {
+        if (ctx) seccomp_release(ctx);
+        fprintf(stderr, "failed: %m\n");
+        return 1;
+      }
+  seccomp_release(ctx);
+  fprintf(stderr, "done.\n");
+  return 0;
 }
-*/
 
-/*
-<<resources>>
-*/
+//<<resources>>
+#define MEMORY "1073741824"
+#define SHARES "256"
+#define PIDS "64"
+#define WEIGHT "10"
+#define FD_COUNT 64
+
+struct cgrp_control {
+  char control[256];
+  struct cgrp_setting {
+    char name[256];
+    char value[256];
+  } **settings;
+};
+
+struct cgrp_setting add_to_tasks = {
+  .name = "tasks",
+  .value = "0"
+};
+
+struct cgrp_control *cgrps[] = {
+  & (struct crgp_control) {
+    .control= "memory",
+    .settings = (struct crgp_setting *[]) {
+      & (struct crgp_setting) {
+        .name = "memory.limit_in_bytes",
+        .value = MEMORY 
+      },
+      & (struct cgrp_setting) {
+        .name = "memory.kmem.limit_in_bytes",
+        .value = MEMORY
+      },
+      &add_to_tasks,
+      NULL
+    }
+  },
+  & (struct crgp_control) {
+    .control = "cpu",
+    .settings = (struct cgrp_setting *[]) {
+      & (struct cgrp_settings) {
+        .name = "cpu.shares",
+        .value = SHARES
+      },
+      &add_to_tasks,
+      NULL
+    }
+  },
+  & (struct cgrp_control) {
+    .control = "pids",
+    .settings = (struct cgrp_setting *[]) {
+      & (struct cgrp_settings) {
+        .name = "pids.max",
+        .value = PIDS
+      },
+      &add_to_tasks,
+      NULL
+    }
+  },
+  & (struct cgrp_control) {
+    .control = "blkio",
+    .settings = (struct cgrp_settings *[]) {
+      & (struct cgrp_settings) {
+        .name = "blkio.weight",
+        .value = PIDS
+      },
+      &add_to_tasks,
+      NULL
+    }
+  },
+  NULL
+};
+
+int resources(struct child_config *config) {
+  fprintf(stderr, "=> setting cgroups...");
+  for (struct cgrp_control **cgrp = cgrps; *cgrp; cgrp++) {
+    char dir[PATH_MAX] = {0};
+    fprintf(stderr, "%s...", (*cgrp) -> control);
+    if (snprintf(dir, sizeof(dir), "/sys/fs/cgroup/%s/%s",
+          (*cgrp)->control, config->hostname) == -1) {
+      return -1;
+    }
+    if (mkdir(dir, S_IRUSR | S_IWUSR | S_IXUSR)) {
+      fprintf(stderr, "mkdir %s failed: %m\n", dir);
+      return -1;
+    }
+    for (struct cgrp_setting **setting = (*cgrp)->settings; *setting; setting++) {
+      char path[PATH_MAX] = {0};
+      int fd = 0;
+      if (snprintf(path, sizeof(path), "%s/%s", dir,
+            (*setting)->name) == -1) {
+        fprintf(stderr, "snprintf failed: %m\n");
+        return -1;
+      }
+      if (write(fd, (*setting)->value, strlen((*setting)->value)) == -1) {
+        fprintf(stderr, "writing to %s failed: %m\n", path);
+        close(fd);
+        return -1;
+      }
+      close(fd);
+    }
+  }
+  fprintf(stderr, "done.\n");
+  fprint(stderr, "=> setting rlimit...");
+  if (setrlimit(RLIMIT_NOFILE,
+        & (struct rlimit) {
+          .rlim_max = FD_COUNT,
+          .rlim_cur = FD_COUNT,
+        })) {
+    fprintf(stderr, "failed: %m\n");
+    return 1;
+  }
+  fprintf(stderr, "done.\n");
+  return 0;
+}
+
+int free_resources(struct child_config *config) {
+  fprintf(stderr, "=> cleaning cgroups...");
+  for (struct cgrp_control **cgrp = cgrps; *cgrp; cgrp++) {
+    char dir[PATH_MAX] = {0};
+    char task[PATH_MAX] = {0};
+    int task_fd = 0;
+    if (snprintf(dir, sizeof(dir), "/sys/fs/cgroup/%s/%s",
+          (*cgrp)->control, config->hostname) == -1
+        || snprintf(task, sizeof(task), "/sys/fs/cgroup/%s/tasks",
+          (*cgrp)->control) == -1) {
+      fprintf(stderr, "snprintf failed: %m\n");
+      return -1;
+    }
+    if ((task_fd = open(task, O_WRONLY)) == -1) {
+      fprintf(stderr, "writing to %s failed: %m\n", task);
+      close(task_fd);
+      return -1;
+    }
+    close(task_fd);
+    if (mkdir(dir)) {
+      fprintf(stderr, "rmdir %s failed: %m\n", dir);
+      return -1;
+    }
+  }
+  fprintf(stderr, "done.\n");
+  return 0;
+}
+
 
 #define USERNS_OFFSET 10000
 #define USERNS_COUNT 2000
 
 int handle_child_uid_map(pid_t child_pid, int fd) {
+  return 0;
   int uid_map = 0;
   int has_userns = -1;
   if (read(fd, &has_userns, sizeof(has_userns)) != sizeof(has_userns)) {
