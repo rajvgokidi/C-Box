@@ -1,5 +1,5 @@
 #define _GNU_SOURCE
-#include <eerno.h>
+#include <errno.h>
 #include <fcntl.h>
 #include <grp.h>
 #include <pwd.h>
@@ -11,13 +11,13 @@
 #include <time.h>
 #include <unistd.h>
 #include <sys/capability.h>
-#include <sys/mounth.h>
+#include <sys/mount.h>
 #include <sys/prctl.h>
 #include <sys/resource.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
 #include <sys/syscall.h>
-#include <utsname.h>
+#include <sys/utsname.h>
 #include <wait.h>
 #include <linux/capability.h>
 #include <linux/limits.h>
@@ -94,7 +94,7 @@ int mounts(struct child_config *config) {
     return -1;
   }
 
-  if(mount(config->mount_dir, NULL, MS_BIND | MS_PRIVATE, NUL)) {
+  if(mount(config->mount_dir, NULL, MS_BIND | MS_PRIVATE, NULL)) {
     fprintf(stderr. "bind mount failed\n");
     return -1;
   }
@@ -144,7 +144,7 @@ int pivot_root(const char *new_root, const char *put_old) {
 
 int syscalls() {
   scmp_filter_ctx ctx = NULL;
-  fprintf(sterr, "=> filtering syscalls...");
+  fprintf(stderr, "=> filtering syscalls...");
   if (!(ctx = seccomp_init(SCMP_ACT_ALLOW))
       || seccomp_rule_add(ctx, SCMP_FAIL, SCMP_SYS(chmod), 1, SCMP_A1(SCMP_CMP_MASKED_EQ, S_ISUID, S_ISUID))
       || seccomp_rule_add(ctx, SCMP_FAIL, SCMP_SYS(chmod), 1, SCMP_A1(SCMP_CMP_MASKED_EQ, S_ISGID, S_ISGID))
@@ -156,7 +156,7 @@ int syscalls() {
       || seccomp_rule_add(ctx, SCMP_FAIL, SCMP_SYS(clone), 1, SCMP_A0(SCMP_CMP_MASKED_EQ, CLONE_NEWUSER, CLONE_NEWUSER))
       || seccomp_rule_add(ctx, SCMP_FAIL, SCMP_SYS(ioctl), 1, SCMP_A1(SCMP_CMP_MASKED_EQ, TIOCSTI, TIOCSTI))
       || seccomp_rule_add(ctx, SCMP_FAIL, SCMP_SYS(keyctl), 0)
-      || seccomp_rule_add(ctx, SCMP_FAIL, SCMP_SYS(addkey), 0)
+      || seccomp_rule_add(ctx, SCMP_FAIL, SCMP_SYS(add_key), 0)
       || seccomp_rule_add(ctx, SCMP_FAIL, SCMP_SYS(request_key), 0)
       || seccomp_rule_add(ctx, SCMP_FAIL, SCMP_SYS(ptrace), 0)
       || seccomp_rule_add(ctx, SCMP_FAIL, SCMP_SYS(mbind), 0)
@@ -197,10 +197,10 @@ struct cgrp_setting add_to_tasks = {
 };
 
 struct cgrp_control *cgrps[] = {
-  & (struct crgp_control) {
+  & (struct cgrp_control) {
     .control= "memory",
-    .settings = (struct crgp_setting *[]) {
-      & (struct crgp_setting) {
+    .settings = (struct cgrp_setting *[]) {
+      & (struct cgrp_setting) {
         .name = "memory.limit_in_bytes",
         .value = MEMORY 
       },
@@ -212,10 +212,10 @@ struct cgrp_control *cgrps[] = {
       NULL
     }
   },
-  & (struct crgp_control) {
+  & (struct cgrp_control) {
     .control = "cpu",
     .settings = (struct cgrp_setting *[]) {
-      & (struct cgrp_settings) {
+      & (struct cgrp_setting) {
         .name = "cpu.shares",
         .value = SHARES
       },
@@ -226,7 +226,7 @@ struct cgrp_control *cgrps[] = {
   & (struct cgrp_control) {
     .control = "pids",
     .settings = (struct cgrp_setting *[]) {
-      & (struct cgrp_settings) {
+      & (struct cgrp_setting) {
         .name = "pids.max",
         .value = PIDS
       },
@@ -237,7 +237,7 @@ struct cgrp_control *cgrps[] = {
   & (struct cgrp_control) {
     .control = "blkio",
     .settings = (struct cgrp_settings *[]) {
-      & (struct cgrp_settings) {
+      & (struct cgrp_setting) {
         .name = "blkio.weight",
         .value = PIDS
       },
@@ -310,7 +310,7 @@ int free_resources(struct child_config *config) {
       return -1;
     }
     close(task_fd);
-    if (mkdir(dir)) {
+    if (rmdir(dir)) {
       fprintf(stderr, "rmdir %s failed: %m\n", dir);
       return -1;
     }
@@ -367,6 +367,8 @@ int userns(struct child_config *config) {
     fprintf(stderr, "couldn't write: %m\n");
     return -1;
   }
+  int result = 0;
+  //if (read(config))
   if(result) return -1;
   if(has_userns) {
     fprintf(stderr, "done.\n");
@@ -546,7 +548,5 @@ cleanup:
   return err;
 
 }
-
-
 
 
