@@ -368,7 +368,10 @@ int userns(struct child_config *config) {
     return -1;
   }
   int result = 0;
-  //if (read(config))
+  if (read(config->fd, &result, sizeof(result)) != sizeof(result)) {
+    fprintf(stderr, "couldn't read: %m\n");
+    return -1;
+  }
   if(result) return -1;
   if(has_userns) {
     fprintf(stderr, "done.\n");
