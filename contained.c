@@ -78,6 +78,10 @@ int capabilities() {
   return 0;
 }
 
+int pivot_root(const char *new_root, const char *put_old) {
+  return syscall(SYS_pivot_root, new_root, put_old);
+}
+
 //<<mounts>>
 int mounts(struct child_config *config) {
   fprintf(stderr, "=> remounting everything with MS_PRIVATE");
@@ -94,12 +98,12 @@ int mounts(struct child_config *config) {
     return -1;
   }
 
-  if(mount(config->mount_dir, NULL, MS_BIND | MS_PRIVATE, NULL)) {
-    fprintf(stderr. "bind mount failed\n");
+  if(mount(config->mount_dir, mount_dir, NULL, MS_BIND | MS_PRIVATE, NULL)) {
+    fprintf(stderr, "bind mount failed\n");
     return -1;
   }
 
-  char inner_mount_dir = "tmp/tmp.XXXXXX/oldroot.XXXXXX";
+  char inner_mount_dir[] = "tmp/tmp.XXXXXX/oldroot.XXXXXX";
   memcpy(inner_mount_dir, mount_dir, sizeof(mount_dir) - 1);
   if(!mkdtemp(inner_mount_dir)) {
     fprintf(stderr, "failed making inner directory!\n");
@@ -118,7 +122,7 @@ int mounts(struct child_config *config) {
   char old_root[sizeof(inner_mount_dir) + 1] = {"/"};
   strcpy(&old_root[1], old_root_dir);
   
-  fpritnf(stderr, "=> unmounting %s...", old_root);
+  fprintf(stderr, "=> unmounting %s...", old_root);
   if(chdir("/")) {
     fprintf(stderr, "chdir failed! %m\n");
     return -1;
@@ -133,10 +137,6 @@ int mounts(struct child_config *config) {
   }
   fprintf(stderr, "done.\n");
   return 0;
-}
-
-int pivot_root(const char *new_root, const char *put_old) {
-  return syscall(SYS_pivot_root, new_root, put_old);
 }
 
 //<<syscalls>>
@@ -236,7 +236,7 @@ struct cgrp_control *cgrps[] = {
   },
   & (struct cgrp_control) {
     .control = "blkio",
-    .settings = (struct cgrp_settings *[]) {
+    .settings = (struct cgrp_setting *[]) {
       & (struct cgrp_setting) {
         .name = "blkio.weight",
         .value = PIDS
@@ -278,7 +278,7 @@ int resources(struct child_config *config) {
     }
   }
   fprintf(stderr, "done.\n");
-  fprint(stderr, "=> setting rlimit...");
+  fprintf(stderr, "=> setting rlimit...");
   if (setrlimit(RLIMIT_NOFILE,
         & (struct rlimit) {
           .rlim_max = FD_COUNT,
@@ -428,7 +428,7 @@ int choose_hostname(char *buff, size_t len) {
     snprintf(buff, len, "%05lx-%s", now.tv_sec, major[ix]);
   } else {
     ix -= sizeof(major) / sizeof(*major);
-    snprintf(buff, len, "%05lx-%s", now.tv_sec, minor[ix % (sizeof(minor) / sizeof(*minor))], suits[ix / (sizeof(minor) / sizeof(*minor))]);
+    snprintf(buff, len, "%05lxc-%s-of-%s", now.tv_sec, minor[ix % (sizeof(minor) / sizeof(*minor))], suits[ix / (sizeof(minor) / sizeof(*minor))]);
   }
 
   return 0;
@@ -538,9 +538,22 @@ finish_options:
 
   close(sockets[1]); // close child socket 
   sockets[1] = 0; // zero fd
+                  
+  if(handle_child_uid_map(child_pid, sockets[0])) {
+      err = 1;
+      goto kill_and_finish_child;
+  }
+  goto finish_child;
 
-  goto cleanup;
-
+kill_and_finish_child:
+  if(child_pid) kill(child_pid, SIGKILL);
+finish_child:;
+             int child_status = 0;
+             waitpid(child_pid, &child_status, 0);
+             err |= WEXITSTATUS(child_status);
+clear_resources:
+             free_resources(&config);
+             free(stack);
 usage:
   fprintf(stderr, "Usage: %s -u -i -m . -c /bin/sh ~\n", argv[0]);
 error:
